@@ -96,9 +96,14 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "cerebras",
     "minimax",
     "moonshot",
+    "zai",
     "venice",
     "ollama",
     "lmstudio",
+    "local-llm",
+    "openai-codex",
+    "github-copilot",
+    "kimi-code",
 ];
 
 /// Static metadata keys allowed directly under `[providers]`.
