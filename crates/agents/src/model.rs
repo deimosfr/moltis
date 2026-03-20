@@ -147,14 +147,18 @@ impl ChatMessage {
                     let tc_json: Vec<serde_json::Value> = tool_calls
                         .iter()
                         .map(|tc| {
-                            serde_json::json!({
+                            let mut val = serde_json::json!({
                                 "id": tc.id,
                                 "type": "function",
                                 "function": {
                                     "name": tc.name,
                                     "arguments": tc.arguments.to_string(),
                                 }
-                            })
+                            });
+                            if let Some(sig) = &tc.thought_signature {
+                                val["thought_signature"] = serde_json::Value::String(sig.clone());
+                            }
+                            val
                         })
                         .collect();
                     let mut msg = serde_json::json!({
@@ -248,10 +252,13 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                                 let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
                                 let arguments =
                                     serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                                let thought_signature =
+                                    tc["thought_signature"].as_str().map(|s| s.to_string());
                                 Some(ToolCall {
                                     id,
                                     name,
                                     arguments,
+                                    thought_signature,
                                 })
                             })
                             .collect()
@@ -332,6 +339,8 @@ pub enum StreamEvent {
         name: String,
         /// Index of this tool call in the response (0-based).
         index: usize,
+        /// Optional Gemini-specific thought signature.
+        thought_signature: Option<String>,
     },
     /// Streaming delta for tool call arguments (JSON fragment).
     ToolCallArgumentsDelta {
@@ -456,11 +465,13 @@ pub struct CompletionResponse {
     pub usage: Usage,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -566,6 +577,7 @@ mod tests {
             id: "call_1".into(),
             name: "exec".into(),
             arguments: serde_json::json!({"cmd": "ls"}),
+            thought_signature: None,
         }]);
         let val = msg.to_openai_value();
         assert_eq!(val["role"], "assistant");
@@ -704,6 +716,7 @@ mod tests {
                     id: "call_1".to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 }],
             },
             ChatMessage::tool("call_1", "result"),

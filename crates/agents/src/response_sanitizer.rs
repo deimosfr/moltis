@@ -245,10 +245,15 @@ fn parse_tool_call_json(content: &str) -> Option<ToolCall> {
         .cloned()
         .unwrap_or(serde_json::json!({}));
     let id = format!("xml-{}", uuid::Uuid::new_v4());
+    let thought_signature = parsed
+        .get("thought_signature")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     Some(ToolCall {
         id,
         name,
         arguments,
+        thought_signature,
     })
 }
 

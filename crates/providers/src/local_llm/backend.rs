@@ -563,6 +563,7 @@ pub mod gguf {
                     id: tc.id,
                     name: tc.name,
                     arguments: tc.arguments,
+                    thought_signature: None,
                 })
                 .collect();
 

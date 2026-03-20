@@ -348,12 +348,17 @@ pub fn to_responses_input(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
                     let mut items: Vec<serde_json::Value> = tool_calls
                         .iter()
                         .map(|tc| {
-                            serde_json::json!({
-                                "type": "function_call",
+                            let mut tool_call = serde_json::json!({
+                                "type": "function",
                                 "call_id": tc.id,
                                 "name": tc.name,
                                 "arguments": tc.arguments.to_string(),
-                            })
+                            });
+                            if let Some(sig) = &tc.thought_signature {
+                                tool_call["thought_signature"] =
+                                    serde_json::Value::String(sig.clone());
+                            }
+                            tool_call
                         })
                         .collect();
                     if let Some(text) = content
@@ -403,10 +408,12 @@ pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
                     let name = tc["function"]["name"].as_str()?.to_string();
                     let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
                     let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                    let thought_signature = tc["thought_signature"].as_str().map(|s| s.to_string());
                     Some(ToolCall {
                         id,
                         name,
                         arguments,
+                        thought_signature,
                     })
                 })
                 .collect()
@@ -576,8 +583,8 @@ pub fn strip_think_tags(content: &str) -> (String, String) {
 /// State for tracking streaming tool calls.
 #[derive(Default)]
 pub struct StreamingToolState {
-    /// Map from index -> (id, name, arguments_buffer)
-    pub tool_calls: HashMap<usize, (String, String, String)>,
+    /// Map from index -> (id, name, arguments_buffer, thought_signature)
+    pub tool_calls: HashMap<usize, (String, String, String, Option<String>)>,
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
@@ -799,13 +806,21 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
 
             // Check if this is a new tool call (has id and function.name)
             if let (Some(id), Some(name)) = (tc["id"].as_str(), tc["function"]["name"].as_str()) {
-                state
-                    .tool_calls
-                    .insert(index, (id.to_string(), name.to_string(), String::new()));
+                let thought_signature = tc["thought_signature"].as_str().map(|s| s.to_string());
+                state.tool_calls.insert(
+                    index,
+                    (
+                        id.to_string(),
+                        name.to_string(),
+                        String::new(),
+                        thought_signature.clone(),
+                    ),
+                );
                 events.push(StreamEvent::ToolCallStart {
                     id: id.to_string(),
                     name: name.to_string(),
                     index,
+                    thought_signature,
                 });
             }
 
@@ -813,7 +828,7 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
             if let Some(args_delta) = tc["function"]["arguments"].as_str()
                 && !args_delta.is_empty()
             {
-                if let Some((_, _, args_buf)) = state.tool_calls.get_mut(&index) {
+                if let Some((_, _, args_buf, _)) = state.tool_calls.get_mut(&index) {
                     args_buf.push_str(args_delta);
                 }
                 events.push(StreamEvent::ToolCallArgumentsDelta {
@@ -927,8 +942,8 @@ pub fn responses_output_index(event: &serde_json::Value, fallback: usize) -> usi
 /// State for tracking Responses API SSE streaming.
 #[derive(Default)]
 pub struct ResponsesStreamState {
-    /// Map from index -> (call_id, name)
-    pub tool_calls: HashMap<usize, (String, String)>,
+    /// Map from index -> (call_id, name, thought_signature)
+    pub tool_calls: HashMap<usize, (String, String, Option<String>)>,
     /// Set of tool call indices that have already emitted `ToolCallComplete`.
     pub completed_tool_calls: HashSet<usize>,
     /// The next tool call index to assign.
@@ -975,8 +990,18 @@ pub fn process_responses_sse_line(data: &str, state: &mut ResponsesStreamState) 
                 let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
                 let index = responses_output_index(&evt, state.current_tool_index);
                 state.current_tool_index = state.current_tool_index.max(index + 1);
-                state.tool_calls.insert(index, (id.clone(), name.clone()));
-                SseLineResult::Events(vec![StreamEvent::ToolCallStart { id, name, index }])
+                let thought_signature = evt["item"]["thought_signature"]
+                    .as_str()
+                    .map(|s| s.to_string());
+                state
+                    .tool_calls
+                    .insert(index, (id.clone(), name.clone(), thought_signature.clone()));
+                SseLineResult::Events(vec![StreamEvent::ToolCallStart {
+                    id,
+                    name,
+                    index,
+                    thought_signature,
+                }])
             } else {
                 SseLineResult::Skip
             }
@@ -1081,10 +1106,13 @@ pub fn parse_responses_completion(resp: &serde_json::Value) -> CompletionRespons
                     let name = item["name"].as_str().unwrap_or("").to_string();
                     let args_str = item["arguments"].as_str().unwrap_or("{}");
                     let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                    let thought_signature =
+                        item["thought_signature"].as_str().map(|s| s.to_string());
                     tool_calls.push(ToolCall {
                         id,
                         name,
                         arguments,
+                        thought_signature,
                     });
                 },
                 _ => {},
@@ -1559,8 +1587,8 @@ mod tests {
                 assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
                     &events[1],
-                    StreamEvent::ToolCallStart { id, name, index }
-                    if id == "call_1" && name == "test" && *index == 0
+                    StreamEvent::ToolCallStart { id, name, index, thought_signature }
+                    if id == "call_1" && name == "test" && *index == 0 && thought_signature.is_none()
                 ));
             },
             _ => panic!("Expected Events"),
@@ -1597,7 +1625,7 @@ mod tests {
         let mut state = StreamingToolState::default();
         state
             .tool_calls
-            .insert(0, ("call_1".into(), "test".into(), "{}".into()));
+            .insert(0, ("call_1".into(), "test".into(), "{}".into(), None));
         state.input_tokens = 10;
         state.output_tokens = 5;
 
@@ -2431,8 +2459,8 @@ mod tests {
                 assert_eq!(events.len(), 1);
                 assert!(matches!(
                     &events[0],
-                    StreamEvent::ToolCallStart { id, name, index }
-                    if id == "call_1" && name == "read_file" && *index == 0
+                    StreamEvent::ToolCallStart { id, name, index, thought_signature }
+                    if id == "call_1" && name == "read_file" && *index == 0 && thought_signature.is_none()
                 ));
             },
             _ => panic!("Expected Events"),
@@ -2466,7 +2494,9 @@ mod tests {
     #[test]
     fn test_responses_sse_tool_call_done() {
         let mut state = ResponsesStreamState::default();
-        state.tool_calls.insert(0, ("call_1".into(), "test".into()));
+        state
+            .tool_calls
+            .insert(0, ("call_1".into(), "test".into(), None));
         state.current_tool_index = 1;
 
         let data = r#"{"type":"response.function_call_arguments.done","output_index":0}"#;
@@ -2486,7 +2516,9 @@ mod tests {
     #[test]
     fn test_responses_sse_tool_call_done_dedup() {
         let mut state = ResponsesStreamState::default();
-        state.tool_calls.insert(0, ("call_1".into(), "test".into()));
+        state
+            .tool_calls
+            .insert(0, ("call_1".into(), "test".into(), None));
         state.current_tool_index = 1;
         state.completed_tool_calls.insert(0);
 
@@ -2554,10 +2586,12 @@ mod tests {
     #[test]
     fn test_finalize_responses_stream_with_pending_tools() {
         let mut state = ResponsesStreamState::default();
-        state.tool_calls.insert(0, ("call_1".into(), "test".into()));
         state
             .tool_calls
-            .insert(1, ("call_2".into(), "test2".into()));
+            .insert(0, ("call_1".into(), "test".into(), None));
+        state
+            .tool_calls
+            .insert(1, ("call_2".into(), "test2".into(), None));
         state.completed_tool_calls.insert(0); // only 0 is completed
         state.input_tokens = 30;
         state.output_tokens = 10;

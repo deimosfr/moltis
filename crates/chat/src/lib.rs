@@ -6080,6 +6080,7 @@ async fn run_with_tools(
                     id,
                     name,
                     arguments,
+                    thought_signature,
                 } => {
                     tool_args_map.insert(id.clone(), arguments.clone());
 
@@ -6126,6 +6127,7 @@ async fn run_with_tools(
                         "toolCallId": id,
                         "toolName": name,
                         "arguments": arguments,
+                        "thoughtSignature": thought_signature,
                         "seq": seq,
                     });
                     if is_browser {

@@ -232,6 +232,7 @@ fn collect_function_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
                     id: new_synthetic_tool_call_id("text"),
                     name: tool_name.to_string(),
                     arguments: serde_json::Value::Object(args),
+                    thought_signature: None,
                 },
                 start: abs_start,
                 end: final_end,
@@ -340,6 +341,7 @@ fn collect_invoke_blocks(text: &str, blocks: &mut Vec<ParsedBlock>) {
                     id: new_synthetic_tool_call_id("text"),
                     name: tool_name.to_string(),
                     arguments: serde_json::Value::Object(args),
+                    thought_signature: None,
                 },
                 start: abs_start,
                 end: abs_end,
@@ -438,6 +440,7 @@ fn try_parse_tool_json(json_str: &str) -> Option<ToolCall> {
         id: new_synthetic_tool_call_id("text"),
         name: tool_name,
         arguments,
+        thought_signature: None,
     })
 }
 

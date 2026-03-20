@@ -315,6 +315,7 @@ pub enum RunnerEvent {
         id: String,
         name: String,
         arguments: serde_json::Value,
+        thought_signature: Option<String>,
     },
     ToolCallEnd {
         id: String,
@@ -882,6 +883,7 @@ pub async fn run_agent_loop_with_context(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                thought_signature: response.text.clone(),
             }];
         }
 
@@ -1005,6 +1007,7 @@ pub async fn run_agent_loop_with_context(
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                     arguments: tc.arguments.clone(),
+                    thought_signature: None,
                 });
             }
             info!(tool = %tc.name, id = %tc.id, args = %tc.arguments, "executing tool");
@@ -1354,13 +1357,19 @@ pub async fn run_agent_loop_streaming(
                         cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
                     }
                 },
-                StreamEvent::ToolCallStart { id, name, index } => {
+                StreamEvent::ToolCallStart {
+                    id,
+                    name,
+                    index,
+                    thought_signature,
+                } => {
                     let vec_pos = tool_calls.len();
                     debug!(tool = %name, id = %id, stream_index = index, vec_pos, "tool call started in stream");
                     tool_calls.push(ToolCall {
                         id,
                         name,
                         arguments: serde_json::json!({}),
+                        thought_signature,
                     });
                     stream_idx_to_vec_pos.insert(index, vec_pos);
                     tool_call_args.insert(index, String::new());
@@ -1549,6 +1558,7 @@ pub async fn run_agent_loop_streaming(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                thought_signature: None,
             }];
         }
 
@@ -1689,6 +1699,7 @@ pub async fn run_agent_loop_streaming(
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                     arguments: tc.arguments.clone(),
+                    thought_signature: tc.thought_signature.clone(),
                 });
             }
             info!(tool = %tc.name, id = %tc.id, args = %tc.arguments, "executing tool");
@@ -2040,6 +2051,7 @@ mod tests {
                         id: "call_1".into(),
                         name: "echo_tool".into(),
                         arguments: serde_json::json!({"text": "hi"}),
+                        thought_signature: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -2327,6 +2339,7 @@ mod tests {
                         id: "call_empty".into(),
                         name: "   ".into(),
                         arguments: serde_json::json!({"text": "hello"}),
+                        thought_signature: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -2354,6 +2367,7 @@ mod tests {
                             id: "call_echo".into(),
                             name: "echo_tool".into(),
                             arguments: serde_json::json!({"text": "hello"}),
+                            thought_signature: None,
                         }],
                         usage: Usage {
                             input_tokens: 8,
@@ -2492,6 +2506,7 @@ mod tests {
                             id: "call_empty_after_text_retry".into(),
                             name: " ".into(),
                             arguments: serde_json::json!({"text": "hello"}),
+                            thought_signature: None,
                         }],
                         usage: Usage {
                             input_tokens: 9,
@@ -2520,6 +2535,7 @@ mod tests {
                             id: "call_echo_after_dual_retry".into(),
                             name: "echo_tool".into(),
                             arguments: serde_json::json!({"text": "hello"}),
+                            thought_signature: None,
                         }],
                         usage: Usage {
                             input_tokens: 8,
@@ -2621,6 +2637,7 @@ mod tests {
                         id: "call_empty_with_text".into(),
                         name: " ".into(),
                         arguments: serde_json::json!({"text": "hello"}),
+                        thought_signature: None,
                     }],
                     usage: Usage::default(),
                 }),
@@ -2630,6 +2647,7 @@ mod tests {
                         id: "call_echo_after_retry".into(),
                         name: "echo_tool".into(),
                         arguments: serde_json::json!({"text": "hello"}),
+                        thought_signature: None,
                     }],
                     usage: Usage::default(),
                 }),
@@ -2706,6 +2724,7 @@ mod tests {
                         id: "call_empty_first".into(),
                         name: " ".into(),
                         arguments: serde_json::json!({"text": "hello"}),
+                        thought_signature: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -2725,6 +2744,7 @@ mod tests {
                             id: "call_empty_second".into(),
                             name: "".into(),
                             arguments: serde_json::json!({"text": "hello"}),
+                            thought_signature: None,
                         }],
                         usage: Usage {
                             input_tokens: 8,
@@ -2745,6 +2765,7 @@ mod tests {
                             id: "call_echo_after_unknown_tool".into(),
                             name: "echo_tool".into(),
                             arguments: serde_json::json!({"text": "hello"}),
+                            thought_signature: None,
                         }],
                         usage: Usage {
                             input_tokens: 7,
@@ -2837,11 +2858,13 @@ mod tests {
                             id: "call_empty_sibling".into(),
                             name: " ".into(),
                             arguments: serde_json::json!({"text": "bad"}),
+                            thought_signature: None,
                         },
                         ToolCall {
                             id: "call_echo_sibling".into(),
                             name: "echo_tool".into(),
                             arguments: serde_json::json!({"text": "good"}),
+                            thought_signature: None,
                         },
                     ],
                     usage: Usage {
@@ -2965,6 +2988,7 @@ mod tests {
                         id: "call_empty".into(),
                         name: " ".into(),
                         index: 0,
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 0,
@@ -2996,6 +3020,7 @@ mod tests {
                             id: "call_echo".into(),
                             name: "echo_tool".into(),
                             index: 0,
+                            thought_signature: None,
                         },
                         StreamEvent::ToolCallArgumentsDelta {
                             index: 0,
@@ -3150,6 +3175,7 @@ mod tests {
                             id: "call_empty_after_text_retry".into(),
                             name: " ".into(),
                             index: 0,
+                            thought_signature: None,
                         },
                         StreamEvent::ToolCallArgumentsDelta {
                             index: 0,
@@ -3182,6 +3208,7 @@ mod tests {
                             id: "call_echo_after_dual_retry".into(),
                             name: "echo_tool".into(),
                             index: 0,
+                            thought_signature: None,
                         },
                         StreamEvent::ToolCallArgumentsDelta {
                             index: 0,
@@ -3301,6 +3328,7 @@ mod tests {
                         id: "call_empty_reasoning".into(),
                         name: " ".into(),
                         index: 0,
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 0,
@@ -3330,6 +3358,7 @@ mod tests {
                             id: "call_echo_after_reasoning_retry".into(),
                             name: "echo_tool".into(),
                             index: 0,
+                            thought_signature: None,
                         },
                         StreamEvent::ToolCallArgumentsDelta {
                             index: 0,
@@ -3424,6 +3453,7 @@ mod tests {
                         id: "call_empty_first".into(),
                         name: " ".into(),
                         index: 0,
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 0,
@@ -3447,6 +3477,7 @@ mod tests {
                             id: "call_empty_second".into(),
                             name: "".into(),
                             index: 0,
+                            thought_signature: None,
                         },
                         StreamEvent::ToolCallArgumentsDelta {
                             index: 0,
@@ -3471,6 +3502,7 @@ mod tests {
                             id: "call_echo_after_unknown_tool".into(),
                             name: "echo_tool".into(),
                             index: 0,
+                            thought_signature: None,
                         },
                         StreamEvent::ToolCallArgumentsDelta {
                             index: 0,
@@ -3579,6 +3611,7 @@ mod tests {
                         id: "call_empty_sibling".into(),
                         name: " ".into(),
                         index: 0,
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 0,
@@ -3589,6 +3622,7 @@ mod tests {
                         id: "call_echo_sibling".into(),
                         name: "echo_tool".into(),
                         index: 1,
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 1,
@@ -3693,6 +3727,7 @@ mod tests {
                         id: "call_exec_1".into(),
                         name: "exec".into(),
                         arguments: serde_json::json!({"command": "echo hello"}),
+                        thought_signature: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -4263,16 +4298,19 @@ mod tests {
                     id: "c1".into(),
                     name: "tool_a".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "c2".into(),
                     name: "tool_b".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "c3".into(),
                     name: "tool_c".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
             ],
         });
@@ -4337,16 +4375,19 @@ mod tests {
                     id: "c1".into(),
                     name: "tool_a".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "c2".into(),
                     name: "fail_tool".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "c3".into(),
                     name: "tool_c".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
             ],
         });
@@ -4400,16 +4441,19 @@ mod tests {
                     id: "c1".into(),
                     name: "slow_a".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "c2".into(),
                     name: "slow_b".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "c3".into(),
                     name: "slow_c".into(),
                     arguments: serde_json::json!({}),
+                    thought_signature: None,
                 },
             ],
         });
@@ -4679,6 +4723,7 @@ mod tests {
                         id: "call_screenshot".into(),
                         name: "screenshot_tool".into(),
                         arguments: serde_json::json!({}),
+                        thought_signature: None,
                     }],
                     usage: Usage {
                         input_tokens: 10,
@@ -5500,6 +5545,7 @@ mod tests {
                         id: "call_abc".into(),
                         name: "echo_tool".into(),
                         index: 1, // non-zero — the bug trigger
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 1,
@@ -5653,6 +5699,7 @@ mod tests {
                         id: "call_1".into(),
                         name: "echo_tool".into(),
                         index: 1,
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 1,
@@ -5663,6 +5710,7 @@ mod tests {
                         id: "call_2".into(),
                         name: "echo_tool".into(),
                         index: 3,
+                        thought_signature: None,
                     },
                     StreamEvent::ToolCallArgumentsDelta {
                         index: 3,
